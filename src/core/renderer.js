@@ -1,0 +1,578 @@
+ /**
+ * WebGL渲染器类
+ */
+export class Renderer {
+    /**
+     * 构造函数
+     * @param {HTMLCanvasElement} canvas - Canvas元素
+     */
+    constructor(canvas) {
+        this.canvas = canvas;
+        this.gl = null;
+        this.ctx2d = null; // 用于降级渲染的2D上下文
+        this.program = null;
+        this.attributes = {};
+        this.uniforms = {};
+        this.buffers = {};
+        this.isInitialized = false;
+        this.useWebGL = true; // 是否使用WebGL渲染
+        this.maxInstanceCount = 20000; // 每批次最大实例数
+        this.fps = 0;
+        this.lastFrameTime = 0;
+        this.frameCount = 0;
+        this.frameTimeAccumulator = 0;
+        
+        // 初始化渲染器
+        this.initialize();
+        
+        // 设置窗口大小调整事件
+        window.addEventListener('resize', () => this.resizeCanvas());
+    }
+    
+    /**
+     * 初始化渲染器
+     */
+    initialize() {
+        try {
+            // 首先尝试初始化WebGL
+            this.initWebGL();
+            
+            // 调整Canvas大小
+            this.resizeCanvas();
+            
+            console.log('渲染器初始化成功，使用模式:', this.useWebGL ? 'WebGL' : 'Canvas 2D');
+            this.isInitialized = true;
+        } catch (error) {
+            console.error('渲染器初始化失败:', error);
+            // 尝试使用Canvas 2D作为备选
+            this.fallbackToCanvas2D(error.message);
+        }
+    }
+    
+    /**
+     * 初始化WebGL
+     */
+    initWebGL() {
+        try {
+            // 先尝试获取WebGL2上下文
+            this.gl = this.canvas.getContext('webgl2', { 
+                antialias: true,
+                alpha: false,  // 禁用alpha以提高性能
+                depth: true,
+                stencil: false // 不需要模板缓冲区
+            });
+            
+            // 如果WebGL2不可用，尝试使用WebGL1
+            if (!this.gl) {
+                console.warn('WebGL2不可用，尝试使用WebGL1');
+                this.gl = this.canvas.getContext('webgl', { 
+                    antialias: true,
+                    alpha: false,
+                    depth: true,
+                    stencil: false
+                }) || 
+                this.canvas.getContext('experimental-webgl', { 
+                    antialias: true,
+                    alpha: false,
+                    depth: true,
+                    stencil: false
+                });
+            }
+            
+            // 如果WebGL完全不可用，降级到Canvas 2D
+            if (!this.gl) {
+                throw new Error('WebGL不可用，浏览器可能不支持WebGL或被禁用');
+            }
+            
+            console.log('WebGL上下文创建成功', this.gl instanceof WebGLRenderingContext ? 'WebGL 1.0' : 'WebGL 2.0');
+            
+            // 为WebGL1添加必要的扩展
+            if (this.gl instanceof WebGLRenderingContext) {
+                this.setupWebGL1Extensions();
+            }
+            
+            // 编译着色器
+            this.program = this.createShaderProgram();
+            console.log('着色器程序创建成功');
+            
+            // 初始化WebGL资源
+            this.setupWebGLResources();
+            
+            // 设置初始状态
+            this.gl.clearColor(0.05, 0.05, 0.1, 1.0);
+            this.gl.enable(this.gl.DEPTH_TEST);
+            this.gl.enable(this.gl.BLEND);
+            this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+            
+            this.useWebGL = true;
+        } catch (error) {
+            console.error('WebGL初始化失败:', error);
+            throw error; // 向上传递错误
+        }
+    }
+    
+    /**
+     * 降级到Canvas 2D渲染
+     * @param {string} errorMessage - 错误信息
+     */
+    fallbackToCanvas2D(errorMessage) {
+        try {
+            console.warn(`降级到Canvas 2D渲染，原因: ${errorMessage}`);
+            this.useWebGL = false;
+            this.gl = null;
+            
+            // 获取2D上下文
+            this.ctx2d = this.canvas.getContext('2d');
+            
+            if (!this.ctx2d) {
+                throw new Error('无法创建Canvas 2D上下文');
+            }
+            
+            // 设置基本样式
+            this.ctx2d.fillStyle = '#1a1a1a';
+            this.ctx2d.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            
+            // 显示降级消息
+            this.ctx2d.fillStyle = '#ffffff';
+            this.ctx2d.font = '14px Arial';
+            this.ctx2d.textAlign = 'center';
+            this.ctx2d.fillText('使用Canvas 2D降级渲染 (性能受限)', this.canvas.width / 2, 20);
+            
+            this.isInitialized = true;
+        } catch (error) {
+            console.error('Canvas 2D降级失败:', error);
+            this.showError('无法初始化任何渲染上下文，请检查浏览器设置');
+            this.isInitialized = false;
+        }
+    }
+    
+    /**
+     * 为WebGL1设置必要的扩展
+     */
+    setupWebGL1Extensions() {
+        try {
+            // 获取实例化绘制扩展
+            const instanceExt = this.gl.getExtension('ANGLE_instanced_arrays');
+            
+            if (!instanceExt) {
+                throw new Error('ANGLE_instanced_arrays扩展不可用');
+            }
+            
+            // 添加WebGL2兼容函数
+            this.gl.vertexAttribDivisor = (index, divisor) => {
+                instanceExt.vertexAttribDivisorANGLE(index, divisor);
+            };
+            
+            this.gl.drawElementsInstanced = (mode, count, type, offset, instanceCount) => {
+                instanceExt.drawElementsInstancedANGLE(mode, count, type, offset, instanceCount);
+            };
+            
+            // 存储扩展以便后续使用
+            this.instanceExt = instanceExt;
+            
+            console.log('WebGL1扩展设置成功');
+        } catch (error) {
+            console.error('WebGL1扩展设置失败:', error);
+            throw error;
+        }
+    }
+    
+    /**
+     * 显示错误信息
+     * @param {string} message - 错误消息
+     */
+    showError(message) {
+        // 在Canvas上显示错误信息
+        if (this.canvas) {
+            const ctx = this.canvas.getContext('2d');
+            if (ctx) {
+                ctx.fillStyle = '#1a1a1a';
+                ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                ctx.fillStyle = '#ff5252';
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(message, this.canvas.width / 2, this.canvas.height / 2 - 20);
+                
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '14px Arial';
+                ctx.fillText('请尝试使用支持WebGL的浏览器，如Chrome或Firefox', this.canvas.width / 2, this.canvas.height / 2 + 20);
+                ctx.fillText('或检查浏览器设置是否启用了硬件加速', this.canvas.width / 2, this.canvas.height / 2 + 40);
+            }
+        }
+    }
+    
+    /**
+     * 创建着色器程序
+     * @returns {WebGLProgram} 着色器程序
+     */
+    createShaderProgram() {
+        // 使用WebGL 1.0兼容的着色器代码
+        // 顶点着色器代码
+        const vertexShaderSource = `
+            attribute vec2 a_position;
+            attribute vec2 a_instancePosition;
+            attribute vec4 a_instanceColor;
+            attribute float a_instanceSize;
+            
+            uniform mat4 u_matrix;
+            uniform float u_zoom;
+            
+            varying vec4 v_color;
+            
+            void main() {
+                // 计算实例化位置
+                vec2 position = a_position * a_instanceSize + a_instancePosition;
+                
+                // 应用变换矩阵
+                gl_Position = u_matrix * vec4(position, 0.0, 1.0);
+                
+                // 传递颜色到片元着色器
+                v_color = a_instanceColor;
+            }`;
+        
+        // 片元着色器代码
+        const fragmentShaderSource = `
+            precision mediump float;
+            
+            varying vec4 v_color;
+            
+            void main() {
+                gl_FragColor = v_color;
+            }`;
+        
+        try {
+            // 创建顶点着色器
+            const vertexShader = this.gl.createShader(this.gl.VERTEX_SHADER);
+            this.gl.shaderSource(vertexShader, vertexShaderSource);
+            this.gl.compileShader(vertexShader);
+            
+            // 检查顶点着色器编译状态
+            if (!this.gl.getShaderParameter(vertexShader, this.gl.COMPILE_STATUS)) {
+                const error = new Error('顶点着色器编译失败: ' + this.gl.getShaderInfoLog(vertexShader));
+                console.error(error);
+                console.error('着色器源码:', vertexShaderSource);
+                throw error;
+            }
+            
+            // 创建片元着色器
+            const fragmentShader = this.gl.createShader(this.gl.FRAGMENT_SHADER);
+            this.gl.shaderSource(fragmentShader, fragmentShaderSource);
+            this.gl.compileShader(fragmentShader);
+            
+            // 检查片元着色器编译状态
+            if (!this.gl.getShaderParameter(fragmentShader, this.gl.COMPILE_STATUS)) {
+                const error = new Error('片元着色器编译失败: ' + this.gl.getShaderInfoLog(fragmentShader));
+                console.error(error);
+                console.error('着色器源码:', fragmentShaderSource);
+                throw error;
+            }
+            
+            // 创建着色器程序
+            const program = this.gl.createProgram();
+            this.gl.attachShader(program, vertexShader);
+            this.gl.attachShader(program, fragmentShader);
+            this.gl.linkProgram(program);
+            
+            // 检查程序链接状态
+            if (!this.gl.getProgramParameter(program, this.gl.LINK_STATUS)) {
+                const error = new Error('着色器程序链接失败: ' + this.gl.getProgramInfoLog(program));
+                console.error(error);
+                throw error;
+            }
+            
+            return program;
+        } catch (error) {
+            console.error('创建着色器程序失败:', error);
+            throw error;
+        }
+    }
+    
+    /**
+     * 设置WebGL资源
+     */
+    setupWebGLResources() {
+        try {
+            // 获取属性位置
+            this.attributes = {
+                position: this.gl.getAttribLocation(this.program, 'a_position'),
+                instancePosition: this.gl.getAttribLocation(this.program, 'a_instancePosition'),
+                instanceColor: this.gl.getAttribLocation(this.program, 'a_instanceColor'),
+                instanceSize: this.gl.getAttribLocation(this.program, 'a_instanceSize')
+            };
+            
+            // 获取uniform位置
+            this.uniforms = {
+                matrix: this.gl.getUniformLocation(this.program, 'u_matrix'),
+                zoom: this.gl.getUniformLocation(this.program, 'u_zoom')
+            };
+            
+            // 创建顶点缓冲区
+            this.buffers.position = this.gl.createBuffer();
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffers.position);
+            
+            // 创建一个单位正方形 (方块形状)
+            const vertices = new Float32Array([
+                -0.5, -0.5,  // 左下
+                 0.5, -0.5,  // 右下
+                 0.5,  0.5,  // 右上
+                -0.5,  0.5   // 左上
+            ]);
+            this.gl.bufferData(this.gl.ARRAY_BUFFER, vertices, this.gl.STATIC_DRAW);
+            
+            // 创建索引缓冲区
+            this.buffers.indices = this.gl.createBuffer();
+            this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.buffers.indices);
+            
+            // 定义索引 (两个三角形组成一个正方形)
+            const indices = new Uint16Array([
+                0, 1, 2,  // 第一个三角形
+                0, 2, 3   // 第二个三角形
+            ]);
+            this.gl.bufferData(this.gl.ELEMENT_ARRAY_BUFFER, indices, this.gl.STATIC_DRAW);
+            
+            // 创建实例化数据缓冲区
+            this.buffers.instancePosition = this.gl.createBuffer();
+            this.buffers.instanceColor = this.gl.createBuffer();
+            this.buffers.instanceSize = this.gl.createBuffer();
+        } catch (error) {
+            console.error('设置WebGL资源失败:', error);
+            throw error;
+        }
+    }
+    
+    /**
+     * 调整Canvas大小
+     */
+    resizeCanvas() {
+        try {
+            if (!this.canvas) return;
+            
+            const devicePixelRatio = window.devicePixelRatio || 1;
+            
+            // 获取显示尺寸
+            const displayWidth = this.canvas.clientWidth;
+            const displayHeight = this.canvas.clientHeight;
+            
+            // 设置Canvas内部尺寸
+            this.canvas.width = displayWidth * devicePixelRatio;
+            this.canvas.height = displayHeight * devicePixelRatio;
+            
+            // 设置视口 (如果使用WebGL)
+            if (this.gl) {
+                this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+            } else if (this.ctx2d) {
+                // 对于Canvas 2D，设置适当的缩放
+                this.ctx2d.scale(devicePixelRatio, devicePixelRatio);
+            }
+        } catch (error) {
+            console.error('调整Canvas大小失败:', error);
+        }
+    }
+    
+    /**
+     * 渲染场景
+     * @param {Array} tiles - 要渲染的瓦片数组
+     * @param {Camera} camera - 相机对象
+     */
+    render(tiles, camera) {
+        if (!this.isInitialized) return;
+        
+        if (this.useWebGL && this.gl) {
+            this.renderWebGL(tiles, camera);
+        } else if (this.ctx2d) {
+            this.renderCanvas2D(tiles, camera);
+        }
+        
+        // 更新帧率
+        this.updateFPS();
+    }
+    
+    /**
+     * 使用WebGL渲染
+     * @param {Array} tiles - 瓦片数组
+     * @param {Camera} camera - 相机对象
+     */
+    renderWebGL(tiles, camera) {
+        if (!tiles || tiles.length === 0) return;
+        
+        // 清除画布
+        this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+        
+        // 使用着色器程序
+        this.gl.useProgram(this.program);
+        
+        // 设置视图矩阵
+        this.gl.uniformMatrix4fv(this.uniforms.matrix, false, camera.matrix);
+        
+        // 设置缩放级别
+        this.gl.uniform1f(this.uniforms.zoom, camera.zoom);
+        
+        // 设置顶点数据
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffers.position);
+        this.gl.enableVertexAttribArray(this.attributes.position);
+        this.gl.vertexAttribPointer(this.attributes.position, 2, this.gl.FLOAT, false, 0, 0);
+        
+        // 设置索引缓冲区
+        this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.buffers.indices);
+        
+        // 分批渲染瓦片
+        for (let i = 0; i < tiles.length; i += this.maxInstanceCount) {
+            const batchTiles = tiles.slice(i, i + this.maxInstanceCount);
+            this.renderBatch(batchTiles);
+        }
+    }
+    
+    /**
+     * 渲染一批瓦片
+     * @param {Array} tiles - 瓦片批次
+     */
+    renderBatch(tiles) {
+        try {
+            const count = tiles.length;
+            
+            // 准备实例化数据
+            const instancePositions = new Float32Array(count * 2);
+            const instanceColors = new Float32Array(count * 4);
+            const instanceSizes = new Float32Array(count);
+            
+            // 填充实例化数据
+            for (let i = 0; i < count; i++) {
+                const tile = tiles[i];
+                
+                // 位置
+                instancePositions[i * 2] = tile.x;
+                instancePositions[i * 2 + 1] = tile.y;
+                
+                // 颜色
+                instanceColors[i * 4] = tile.color[0];
+                instanceColors[i * 4 + 1] = tile.color[1];
+                instanceColors[i * 4 + 2] = tile.color[2];
+                instanceColors[i * 4 + 3] = tile.color[3];
+                
+                // 大小
+                instanceSizes[i] = tile.size;
+            }
+            
+            // 设置实例化位置
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffers.instancePosition);
+            this.gl.bufferData(this.gl.ARRAY_BUFFER, instancePositions, this.gl.DYNAMIC_DRAW);
+            this.gl.enableVertexAttribArray(this.attributes.instancePosition);
+            this.gl.vertexAttribPointer(this.attributes.instancePosition, 2, this.gl.FLOAT, false, 0, 0);
+            this.gl.vertexAttribDivisor(this.attributes.instancePosition, 1); // 实例化率
+            
+            // 设置实例化颜色
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffers.instanceColor);
+            this.gl.bufferData(this.gl.ARRAY_BUFFER, instanceColors, this.gl.DYNAMIC_DRAW);
+            this.gl.enableVertexAttribArray(this.attributes.instanceColor);
+            this.gl.vertexAttribPointer(this.attributes.instanceColor, 4, this.gl.FLOAT, false, 0, 0);
+            this.gl.vertexAttribDivisor(this.attributes.instanceColor, 1); // 实例化率
+            
+            // 设置实例化大小
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffers.instanceSize);
+            this.gl.bufferData(this.gl.ARRAY_BUFFER, instanceSizes, this.gl.DYNAMIC_DRAW);
+            this.gl.enableVertexAttribArray(this.attributes.instanceSize);
+            this.gl.vertexAttribPointer(this.attributes.instanceSize, 1, this.gl.FLOAT, false, 0, 0);
+            this.gl.vertexAttribDivisor(this.attributes.instanceSize, 1); // 实例化率
+            
+            // 绘制实例化方块
+            this.gl.drawElementsInstanced(
+                this.gl.TRIANGLES,    // 模式
+                6,                   // 索引数量
+                this.gl.UNSIGNED_SHORT, // 索引类型
+                0,                   // 偏移量
+                count                // 实例数量
+            );
+        } catch (error) {
+            console.error('渲染批次失败:', error);
+        }
+    }
+    
+    /**
+     * 使用Canvas 2D渲染 (降级方案)
+     * @param {Array} tiles - 瓦片数组
+     * @param {Camera} camera - 相机对象
+     */
+    renderCanvas2D(tiles, camera) {
+        if (!tiles || tiles.length === 0 || !this.ctx2d) return;
+        
+        try {
+            // 清除画布
+            this.ctx2d.fillStyle = '#1a1a1a';
+            this.ctx2d.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            
+            // 设置变换
+            this.ctx2d.save();
+            
+            // 移动到中心
+            this.ctx2d.translate(this.canvas.width / 2, this.canvas.height / 2);
+            
+            // 应用缩放
+            this.ctx2d.scale(camera.zoom, camera.zoom);
+            
+            // 应用平移
+            this.ctx2d.translate(-camera.position.x, -camera.position.y);
+            
+            // 限制渲染的瓦片数量以保持性能
+            const maxTiles = Math.min(tiles.length, 5000);
+            
+            // 渲染瓦片
+            for (let i = 0; i < maxTiles; i++) {
+                const tile = tiles[i];
+                
+                // 设置颜色
+                this.ctx2d.fillStyle = `rgba(${tile.color[0] * 255}, ${tile.color[1] * 255}, ${tile.color[2] * 255}, ${tile.color[3]})`;
+                
+                // 绘制方块
+                const halfSize = tile.size / 2;
+                this.ctx2d.fillRect(
+                    tile.x - halfSize,
+                    tile.y - halfSize,
+                    tile.size,
+                    tile.size
+                );
+            }
+            
+            // 恢复变换
+            this.ctx2d.restore();
+            
+            // 显示降级渲染信息
+            this.ctx2d.fillStyle = 'rgba(255, 255, 255, 0.7)';
+            this.ctx2d.font = '12px Arial';
+            this.ctx2d.textAlign = 'left';
+            this.ctx2d.fillText(`使用Canvas 2D降级渲染 (显示${maxTiles}/${tiles.length}个瓦片)`, 10, 20);
+        } catch (error) {
+            console.error('Canvas 2D渲染失败:', error);
+        }
+    }
+    
+    /**
+     * 更新帧率计算
+     */
+    updateFPS() {
+        try {
+            const now = performance.now();
+            const elapsed = now - this.lastFrameTime;
+            this.lastFrameTime = now;
+            
+            // 累积帧时间
+            this.frameTimeAccumulator += elapsed;
+            this.frameCount++;
+            
+            // 每秒更新一次FPS显示
+            if (this.frameTimeAccumulator >= 1000) {
+                this.fps = Math.round(this.frameCount * 1000 / this.frameTimeAccumulator);
+                
+                const fpsElement = document.getElementById('fps');
+                if (fpsElement) {
+                    fpsElement.textContent = this.fps;
+                }
+                
+                this.frameTimeAccumulator = 0;
+                this.frameCount = 0;
+            }
+        } catch (error) {
+            console.error('更新FPS失败:', error);
+        }
+    }
+}
