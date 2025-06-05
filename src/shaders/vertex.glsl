@@ -7,6 +7,7 @@ uniform mat4 u_matrix;
 uniform float u_zoom;
 
 varying vec4 v_color;
+varying vec2 v_position;
 
 void main() {
     // 计算实例化位置
@@ -17,4 +18,7 @@ void main() {
     
     // 传递颜色到片元着色器
     v_color = a_instanceColor;
+    
+    // 传递原始位置给片元着色器，用于边缘平滑处理
+    v_position = a_position;
 } 

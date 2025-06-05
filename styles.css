@@ -23,6 +23,9 @@ body {
     height: calc(100% - 60px);
     display: block;
     background-color: #000;
+    image-rendering: -webkit-optimize-contrast; /* Chrome, Safari */
+    image-rendering: crisp-edges; /* Firefox */
+    -ms-interpolation-mode: nearest-neighbor; /* IE */
 }
 
 .controls {
@@ -65,4 +68,15 @@ button:hover {
 
 button:active {
     background-color: #555;
+}
+
+/* Media query for high DPI screens */
+@media screen and (min-resolution: 2dppx) {
+    .info {
+        font-size: 16px;
+    }
+    
+    button {
+        padding: 10px 18px;
+    }
 } 

@@ -23,12 +23,117 @@ export class Renderer {
     this.frameTimeAccumulator = 0;
     this.useOffscreenCanvas = false;
     this.displayCanvas = null;
+    this.hasContextLost = false; // 标记WebGL上下文是否丢失
 
     // 初始化渲染器
     this.initialize();
 
     // 设置窗口大小调整事件
     window.addEventListener("resize", () => this.resizeCanvas());
+
+    // 设置WebGL上下文事件监听器
+    this.setupContextEventListeners();
+  }
+
+  /**
+   * 设置WebGL上下文事件监听器
+   */
+  setupContextEventListeners() {
+    if (!this.canvas) return;
+
+    // 监听WebGL上下文丢失事件
+    this.canvas.addEventListener(
+      "webglcontextlost",
+      (event) => {
+        event.preventDefault(); // 阻止默认行为，允许恢复
+        console.warn("WebGL上下文丢失");
+        this.hasContextLost = true;
+      },
+      false
+    );
+
+    // 监听WebGL上下文恢复事件
+    this.canvas.addEventListener(
+      "webglcontextrestored",
+      () => {
+        console.log("WebGL上下文已恢复，重新初始化渲染器");
+        this.hasContextLost = false;
+        this.reinitialize();
+      },
+      false
+    );
+  }
+
+  /**
+   * 重新初始化渲染器
+   */
+  reinitialize() {
+    try {
+      // 清除旧的WebGL资源
+      this.disposeResources();
+
+      // 重新初始化
+      this.gl = this.tryGetWebGLContext();
+
+      if (this.gl) {
+        console.log("WebGL上下文重新获取成功");
+
+        // 为WebGL1添加必要的扩展
+        if (this.gl instanceof WebGLRenderingContext) {
+          this.setupWebGL1Extensions();
+        }
+
+        // 重新编译着色器
+        this.program = this.createShaderProgram();
+
+        // 重新初始化WebGL资源
+        this.setupWebGLResources();
+
+        // 设置初始状态
+        this.gl.clearColor(0.05, 0.05, 0.1, 1.0);
+        this.gl.enable(this.gl.DEPTH_TEST);
+        this.gl.enable(this.gl.BLEND);
+        this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+
+        this.isInitialized = true;
+        this.useWebGL = true;
+      } else {
+        // 如果无法重新获取WebGL上下文，降级到Canvas 2D
+        this.fallbackToCanvas2D("WebGL上下文恢复失败");
+      }
+    } catch (error) {
+      console.error("重新初始化渲染器失败:", error);
+      this.fallbackToCanvas2D(error.message);
+    }
+  }
+
+  /**
+   * 释放WebGL资源
+   */
+  disposeResources() {
+    if (!this.gl) return;
+
+    try {
+      // 删除着色器程序
+      if (this.program) {
+        this.gl.deleteProgram(this.program);
+        this.program = null;
+      }
+
+      // 删除缓冲区
+      for (const key in this.buffers) {
+        if (this.buffers[key]) {
+          this.gl.deleteBuffer(this.buffers[key]);
+        }
+      }
+      this.buffers = {};
+
+      // 重置属性和uniform位置
+      this.attributes = {};
+      this.uniforms = {};
+    } catch (error) {
+      console.error("释放WebGL资源失败:", error);
+    }
   }
 
   /**
@@ -216,6 +321,20 @@ export class Renderer {
     // 确保canvas有有效尺寸
     this.ensureCanvasSize(this.canvas);
 
+    // 获取设备像素比，用于高DPI屏幕
+    const pixelRatio = window.devicePixelRatio || 1;
+
+    // 调整canvas尺寸以匹配设备像素比
+    if (pixelRatio > 1) {
+      const displayWidth = this.canvas.clientWidth;
+      const displayHeight = this.canvas.clientHeight;
+      this.canvas.width = displayWidth * pixelRatio;
+      this.canvas.height = displayHeight * pixelRatio;
+      console.log(
+        `应用设备像素比 ${pixelRatio}，Canvas尺寸调整为: ${this.canvas.width} x ${this.canvas.height}`
+      );
+    }
+
     // 先尝试获取WebGL2上下文
     console.log("尝试获取WebGL2上下文...");
     gl = this.canvas.getContext("webgl2", {
@@ -224,7 +343,8 @@ export class Renderer {
       depth: true,
       stencil: false, // 不需要模板缓冲区
       failIfMajorPerformanceCaveat: false, // 即使性能较低也创建上下文
-      powerPreference: "default", // 可以是'high-performance'、'low-power'或'default'
+      powerPreference: "high-performance", // 使用高性能模式
+      preserveDrawingBuffer: true, // 保留绘图缓冲区，提高截图质量
     });
 
     // 如果WebGL2不可用，尝试使用WebGL1
@@ -238,9 +358,11 @@ export class Renderer {
           depth: true,
           stencil: false,
           failIfMajorPerformanceCaveat: false,
+          powerPreference: "high-performance",
+          preserveDrawingBuffer: true,
         },
         {
-          antialias: false,
+          antialias: true,
           alpha: false,
           depth: true,
           stencil: false,
@@ -393,41 +515,105 @@ export class Renderer {
    * @returns {WebGLProgram} 着色器程序
    */
   createShaderProgram() {
-    // 使用WebGL 1.0兼容的着色器代码
-    // 顶点着色器代码
-    const vertexShaderSource = `
-            attribute vec2 a_position;
-            attribute vec2 a_instancePosition;
-            attribute vec4 a_instanceColor;
-            attribute float a_instanceSize;
-            
-            uniform mat4 u_matrix;
-            uniform float u_zoom;
-            
-            varying vec4 v_color;
-            
-            void main() {
-                // 计算实例化位置
-                vec2 position = a_position * a_instanceSize + a_instancePosition;
-                
-                // 应用变换矩阵
-                gl_Position = u_matrix * vec4(position, 0.0, 1.0);
-                
-                // 传递颜色到片元着色器
-                v_color = a_instanceColor;
-            }`;
-
-    // 片元着色器代码
-    const fragmentShaderSource = `
-            precision mediump float;
-            
-            varying vec4 v_color;
-            
-            void main() {
-                gl_FragColor = v_color;
-            }`;
-
     try {
+      // 检查gl是否已初始化
+      if (!this.gl) {
+        throw new Error("WebGL上下文未初始化");
+      }
+
+      // 尝试加载外部着色器，如果失败则使用内置着色器
+      try {
+        return this.createShaderProgramFromSource(
+          this.getVertexShaderSource(),
+          this.getFragmentShaderSource()
+        );
+      } catch (error) {
+        console.error("加载着色器源码失败:", error);
+        return this.createBuiltinShaderProgram();
+      }
+    } catch (error) {
+      console.error("创建着色器程序失败:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取顶点着色器源码
+   * @returns {string} 着色器源码
+   */
+  getVertexShaderSource() {
+    // 使用内联的顶点着色器源码
+    return `
+      attribute vec2 a_position;
+      attribute vec2 a_instancePosition;
+      attribute vec4 a_instanceColor;
+      attribute float a_instanceSize;
+      
+      uniform mat4 u_matrix;
+      uniform float u_zoom;
+      uniform float u_pixelRatio;
+      
+      varying vec4 v_color;
+      varying vec2 v_position;
+      
+      void main() {
+          // 计算实例化位置
+          vec2 position = a_position * a_instanceSize + a_instancePosition;
+          
+          gl_Position = u_matrix * vec4(position, 0.0, 1.0);
+          
+          // 传递颜色到片元着色器
+          v_color = a_instanceColor;
+          
+          // 传递原始位置给片元着色器，用于边缘平滑处理
+          v_position = a_position;
+      }
+    `;
+  }
+
+  /**
+   * 获取片元着色器源码
+   * @returns {string} 着色器源码
+   */
+  getFragmentShaderSource() {
+    // 使用内联的片元着色器源码
+    return `
+      precision highp float;
+      
+      varying vec4 v_color;
+      varying vec2 v_position;
+      
+      void main() {
+          // 计算到方块边缘的距离
+          vec2 center = vec2(0.0, 0.0);
+          vec2 toCenter = abs(v_position);
+          
+          // 边缘平滑度因子 (值越大，边缘越平滑)
+          float smoothFactor = 0.05;
+          
+          // 计算平滑因子
+          float distToEdge = max(toCenter.x, toCenter.y);
+          float alpha = 1.0 - smoothstep(0.5 - smoothFactor, 0.5, distToEdge);
+          
+          // 应用平滑边缘
+          gl_FragColor = vec4(v_color.rgb, v_color.a * alpha);
+      }
+    `;
+  }
+
+  /**
+   * 从指定源码创建着色器程序
+   * @param {string} vertexShaderSource - 顶点着色器源码
+   * @param {string} fragmentShaderSource - 片元着色器源码
+   * @returns {WebGLProgram} 着色器程序
+   */
+  createShaderProgramFromSource(vertexShaderSource, fragmentShaderSource) {
+    try {
+      // 确保WebGL上下文存在
+      if (!this.gl) {
+        throw new Error("WebGL上下文未初始化");
+      }
+
       // 创建顶点着色器
       const vertexShader = this.gl.createShader(this.gl.VERTEX_SHADER);
       this.gl.shaderSource(vertexShader, vertexShaderSource);
@@ -475,9 +661,20 @@ export class Renderer {
 
       return program;
     } catch (error) {
-      console.error("创建着色器程序失败:", error);
+      console.error("从源码创建着色器程序失败:", error);
       throw error;
     }
+  }
+
+  /**
+   * 创建内置着色器程序
+   * @returns {WebGLProgram} 着色器程序
+   */
+  createBuiltinShaderProgram() {
+    return this.createShaderProgramFromSource(
+      this.getVertexShaderSource(),
+      this.getFragmentShaderSource()
+    );
   }
 
   /**
@@ -503,6 +700,7 @@ export class Renderer {
       this.uniforms = {
         matrix: this.gl.getUniformLocation(this.program, "u_matrix"),
         zoom: this.gl.getUniformLocation(this.program, "u_zoom"),
+        pixelRatio: this.gl.getUniformLocation(this.program, "u_pixelRatio"),
       };
 
       // 创建顶点缓冲区
@@ -541,10 +739,25 @@ export class Renderer {
         this.gl.STATIC_DRAW
       );
 
-      // 创建实例化数据缓冲区
+      // 创建实例化位置缓冲区
       this.buffers.instancePosition = this.gl.createBuffer();
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffers.instancePosition);
+      // 暂不填充数据，将在渲染时填充
+
+      // 创建实例化颜色缓冲区
       this.buffers.instanceColor = this.gl.createBuffer();
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffers.instanceColor);
+      // 暂不填充数据，将在渲染时填充
+
+      // 创建实例化大小缓冲区
       this.buffers.instanceSize = this.gl.createBuffer();
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffers.instanceSize);
+      // 暂不填充数据，将在渲染时填充
+
+      // 设置混合模式
+      this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+
+      console.log("WebGL资源设置完成");
     } catch (error) {
       console.error("设置WebGL资源失败:", error);
       throw error;
@@ -588,8 +801,46 @@ export class Renderer {
   render(tiles, camera) {
     if (!this.isInitialized) return;
 
+    // 如果WebGL上下文丢失，尝试恢复或跳过渲染
+    if (this.hasContextLost) {
+      // 尝试检测上下文是否已恢复但事件尚未触发
+      if (this.gl && !this.gl.isContextLost()) {
+        console.log("检测到WebGL上下文已恢复，但事件未触发，手动重新初始化");
+        this.hasContextLost = false;
+        this.reinitialize();
+      } else {
+        // 显示上下文丢失信息
+        this.renderContextLostMessage();
+        return;
+      }
+    }
+
     if (this.useWebGL && this.gl) {
-      this.renderWebGL(tiles, camera);
+      // 添加额外的上下文检查
+      let contextValid = true;
+      try {
+        // 尝试一个简单的WebGL操作，验证上下文是否真的可用
+        this.gl.getParameter(this.gl.VERSION);
+      } catch (e) {
+        contextValid = false;
+        this.hasContextLost = true;
+      }
+
+      if (!contextValid) {
+        this.renderContextLostMessage();
+        return;
+      }
+
+      try {
+        this.renderWebGL(tiles, camera);
+      } catch (error) {
+        console.error("WebGL渲染失败:", error);
+        // 检查是否是上下文丢失导致的
+        if (this.gl.isContextLost && this.gl.isContextLost()) {
+          this.hasContextLost = true;
+          this.renderContextLostMessage();
+        }
+      }
 
       // 如果使用离屏canvas，复制到显示canvas
       if (this.useOffscreenCanvas && this.displayCanvas) {
@@ -614,22 +865,15 @@ export class Renderer {
             );
           }
         } catch (error) {
-          console.error(
-            "复制离屏Canvas到显示Canvas失败:",
-            error,
-            "离屏Canvas尺寸:",
-            this.canvas.width,
-            "x",
-            this.canvas.height,
-            "显示Canvas尺寸:",
-            this.displayCanvas.width,
-            "x",
-            this.displayCanvas.height
-          );
+          console.error("复制离屏Canvas到显示Canvas失败:", error);
         }
       }
     } else if (this.ctx2d) {
-      this.renderCanvas2D(tiles, camera);
+      try {
+        this.renderCanvas2D(tiles, camera);
+      } catch (error) {
+        console.error("Canvas 2D渲染失败:", error);
+      }
     }
 
     // 更新帧率
@@ -642,39 +886,78 @@ export class Renderer {
    * @param {Camera} camera - 相机对象
    */
   renderWebGL(tiles, camera) {
-    if (!tiles || tiles.length === 0) return;
+    try {
+      if (!tiles || tiles.length === 0) return;
 
-    // 清除画布
-    this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+      // 验证相机矩阵
+      if (
+        !camera ||
+        !camera.matrix ||
+        camera.matrix.some((v) => !isFinite(v))
+      ) {
+        console.error("相机矩阵无效");
+        return;
+      }
 
-    // 使用着色器程序
-    this.gl.useProgram(this.program);
+      // 清除画布
+      this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
 
-    // 设置视图矩阵
-    this.gl.uniformMatrix4fv(this.uniforms.matrix, false, camera.matrix);
+      // 获取设备像素比
+      const pixelRatio = window.devicePixelRatio || 1;
 
-    // 设置缩放级别
-    this.gl.uniform1f(this.uniforms.zoom, camera.zoom);
+      // 设置WebGL视口以匹配canvas大小
+      this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
 
-    // 设置顶点数据
-    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffers.position);
-    this.gl.enableVertexAttribArray(this.attributes.position);
-    this.gl.vertexAttribPointer(
-      this.attributes.position,
-      2,
-      this.gl.FLOAT,
-      false,
-      0,
-      0
-    );
+      // 启用抗锯齿
+      if (this.gl.getContextAttributes().antialias) {
+        // 如果WebGL上下文支持抗锯齿
+        this.gl.enable(this.gl.SAMPLE_COVERAGE);
+        this.gl.sampleCoverage(0.5, false);
+      }
 
-    // 设置索引缓冲区
-    this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.buffers.indices);
+      // 使用着色器程序
+      this.gl.useProgram(this.program);
 
-    // 分批渲染瓦片
-    for (let i = 0; i < tiles.length; i += this.maxInstanceCount) {
-      const batchTiles = tiles.slice(i, i + this.maxInstanceCount);
-      this.renderBatch(batchTiles);
+      // 设置视图矩阵
+      this.gl.uniformMatrix4fv(this.uniforms.matrix, false, camera.matrix);
+
+      // 设置缩放级别
+      this.gl.uniform1f(this.uniforms.zoom, camera.zoom);
+
+      // 设置设备像素比
+      if (this.uniforms.pixelRatio) {
+        this.gl.uniform1f(this.uniforms.pixelRatio, pixelRatio);
+      }
+
+      // 设置顶点数据
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffers.position);
+      this.gl.enableVertexAttribArray(this.attributes.position);
+      this.gl.vertexAttribPointer(
+        this.attributes.position,
+        2,
+        this.gl.FLOAT,
+        false,
+        0,
+        0
+      );
+
+      // 设置索引缓冲区
+      this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.buffers.indices);
+
+      // 分批渲染瓦片
+      const batchSize = Math.min(this.maxInstanceCount, 2000); // 减小批次大小以提高稳定性
+      for (let i = 0; i < tiles.length; i += batchSize) {
+        try {
+          const batchTiles = tiles.slice(i, i + batchSize);
+          this.renderBatch(batchTiles);
+        } catch (batchError) {
+          console.error("渲染批次失败:", batchError, "跳过此批次");
+          // 继续下一批次，避免一个批次失败导致整个渲染中断
+        }
+      }
+    } catch (error) {
+      console.error("WebGL渲染失败:", error);
+      throw error; // 向上传递错误，以便外层处理上下文丢失
     }
   }
 
@@ -869,6 +1152,31 @@ export class Renderer {
       }
     } catch (error) {
       console.error("更新FPS失败:", error);
+    }
+  }
+
+  /**
+   * 渲染上下文丢失消息
+   */
+  renderContextLostMessage() {
+    try {
+      // 尝试使用2D上下文渲染消息
+      const ctx = this.canvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#1a1a1a";
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        ctx.fillStyle = "#ff5252";
+        ctx.font = "16px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(
+          "WebGL上下文丢失，正在尝试恢复...",
+          this.canvas.width / 2,
+          this.canvas.height / 2
+        );
+      }
+    } catch (error) {
+      console.error("渲染上下文丢失消息失败:", error);
     }
   }
 }

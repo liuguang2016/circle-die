@@ -15,7 +15,7 @@ export class TileManager {
             this.circleGrid = circleGrid;
             this.camera = camera;
             this.quadTree = null;
-            this.lodLevels = 5; // LOD级别数量
+            this.lodLevels = 6; // 增加LOD级别为6 (原来是5)
             this.baseTileSize = 1.0; // 基础瓦片大小
             this.lastZoomLevel = 0;
             this.needsRebuild = true;
@@ -207,10 +207,18 @@ export class TileManager {
         // 缩放越大，LOD级别越高 (更多细节)
         const minZoom = this.camera.minZoom;
         const maxZoom = this.camera.maxZoom;
-        const normalizedZoom = (zoomLevel - minZoom) / (maxZoom - minZoom);
         
-        // 计算LOD级别 (0-4)
-        return Math.min(this.lodLevels - 1, Math.floor(normalizedZoom * this.lodLevels));
+        // 更平滑的LOD计算方式
+        let normalizedZoom = (zoomLevel - minZoom) / (maxZoom - minZoom);
+        
+        // 应用非线性映射，使缩放较高时增加更多细节
+        normalizedZoom = Math.pow(normalizedZoom, 0.8);
+        
+        // 计算LOD级别，支持小数级别
+        const floatLevel = normalizedZoom * (this.lodLevels - 1);
+        
+        // 返回整数级别（0 到 lodLevels-1）
+        return Math.min(this.lodLevels - 1, Math.floor(floatLevel));
     }
     
     /**
@@ -229,46 +237,108 @@ export class TileManager {
         const centerX = (viewBounds.left + viewBounds.right) / 2;
         const centerY = (viewBounds.top + viewBounds.bottom) / 2;
         
+        // 视口宽度，用于计算距离因子
+        const viewportWidth = viewBounds.right - viewBounds.left;
+        const viewportHeight = viewBounds.bottom - viewBounds.top;
+        const viewportSize = Math.max(viewportWidth, viewportHeight);
+        
         // 对每个瓦片应用基于距离的LOD
         for (const tile of tiles) {
-            // 计算到视口中心的距离
-            const distanceToCenter = Math.sqrt(
-                Math.pow(tile.x - centerX, 2) + 
-                Math.pow(tile.y - centerY, 2)
+          // 计算到视口中心的距离
+          const distanceToCenter = Math.sqrt(
+            Math.pow(tile.x - centerX, 2) + Math.pow(tile.y - centerY, 2)
+          );
+
+          // 计算基于距离的LOD调整
+          // 距离越远，细节越少，但减少LOD下降速度
+          const distanceFactor = Math.min(
+            1,
+            distanceToCenter / (viewportSize * 0.8)
+          );
+
+          // 指数下降，使中心区域保持高细节，边缘区域逐渐降低细节
+          const lodDropoff = 2.5 * Math.pow(distanceFactor, 1.5);
+
+          // 计算最终LOD级别，至少保持0级
+          const targetLevel = Math.max(0, baseLevel - Math.floor(lodDropoff));
+
+          // 计算瓦片在此LOD级别的网格位置
+          const tileSize =
+            this.baseTileSize * Math.pow(2, this.lodLevels - 1 - targetLevel);
+          const gridX = Math.floor(tile.x / tileSize);
+          const gridY = Math.floor(tile.y / tileSize);
+          const gridKey = `${targetLevel}:${gridX},${gridY}`;
+
+          // 检查此位置是否已处理
+          if (!processedGrid[gridKey]) {
+            processedGrid[gridKey] = true;
+
+            // 查找对应的LOD瓦片
+            const lodTiles = this.tilesByLevel[targetLevel];
+            const lodTile = lodTiles.find(
+              (t) =>
+                Math.floor(t.x / tileSize) === gridX &&
+                Math.floor(t.y / tileSize) === gridY
             );
-            
-            // 计算基于距离的LOD调整
-            // 距离越远，细节越少
-            const distanceFactor = Math.min(1, distanceToCenter / (this.circleGrid.radius * 0.5));
-            const distanceAdjustedLevel = Math.max(0, baseLevel - Math.floor(distanceFactor * 3));
-            
-            // 根据LOD级别选择适当的瓦片
-            const targetLevel = distanceAdjustedLevel;
-            
-            // 计算瓦片在此LOD级别的网格位置
-            const tileSize = this.baseTileSize * Math.pow(2, this.lodLevels - 1 - targetLevel);
-            const gridX = Math.floor(tile.x / tileSize);
-            const gridY = Math.floor(tile.y / tileSize);
-            const gridKey = `${targetLevel}:${gridX},${gridY}`;
-            
-            // 检查此位置是否已处理
-            if (!processedGrid[gridKey]) {
-                processedGrid[gridKey] = true;
-                
-                // 查找对应的LOD瓦片
-                const lodTiles = this.tilesByLevel[targetLevel];
-                const lodTile = lodTiles.find(t => 
-                    Math.floor(t.x / tileSize) === gridX && 
-                    Math.floor(t.y / tileSize) === gridY
+
+            if (lodTile) {
+              result.push(lodTile);
+            } else if (targetLevel < this.lodLevels - 1) {
+              // 如果没有找到合适的LOD瓦片，尝试在更高细节级别寻找
+              let foundHigherLOD = false;
+
+              // 从当前级别+1开始搜索
+              for (
+                let level = targetLevel + 1;
+                level < this.lodLevels;
+                level++
+              ) {
+                // 计算在此级别的网格位置
+                const higherTileSize =
+                  this.baseTileSize * Math.pow(2, this.lodLevels - 1 - level);
+                const higherGridXMin = Math.floor(
+                  (gridX * tileSize) / higherTileSize
                 );
-                
-                if (lodTile) {
-                    result.push(lodTile);
-                } else if (targetLevel < this.lodLevels - 1) {
-                    // 如果没有找到合适的LOD瓦片，使用原始瓦片
-                    result.push(tile);
+                const higherGridXMax = Math.floor(
+                  ((gridX + 1) * tileSize) / higherTileSize
+                );
+                const higherGridYMin = Math.floor(
+                  (gridY * tileSize) / higherTileSize
+                );
+                const higherGridYMax = Math.floor(
+                  ((gridY + 1) * tileSize) / higherTileSize
+                );
+
+                // 检查每个可能的位置
+                for (let x = higherGridXMin; x <= higherGridXMax; x++) {
+                  for (let y = higherGridYMin; y <= higherGridYMax; y++) {
+                    const higherLodTiles = this.tilesByLevel[level];
+                    const higherLodTile = higherLodTiles.find(
+                      (t) =>
+                        Math.floor(t.x / higherTileSize) === x &&
+                        Math.floor(t.y / higherTileSize) === y
+                    );
+
+                    if (higherLodTile) {
+                      result.push(higherLodTile);
+                      foundHigherLOD = true;
+                    }
+                  }
                 }
+
+                // 如果找到了更高细节级别的瓦片，不再继续搜索
+                if (foundHigherLOD) break;
+              }
+
+              // 如果在所有级别都没找到，使用原始瓦片
+              if (!foundHigherLOD) {
+                result.push(tile);
+              }
+            } else {
+              // 直接使用原始瓦片
+              result.push(tile);
             }
+          }
         }
         
         return result;

@@ -27,11 +27,7 @@ class CircleRenderer {
             console.log("Canvas元素获取成功", this.canvas);
 
             // 确保canvas有初始宽高
-            if (!this.canvas.width || !this.canvas.height) {
-              console.log("Canvas尺寸未设置，设置初始尺寸");
-              this.canvas.width = this.canvas.clientWidth || 800;
-              this.canvas.height = this.canvas.clientHeight || 600;
-            }
+            this.setupCanvasSize();
             
             // 显示加载中信息
             this.showLoadingMessage("正在初始化渲染器...");
@@ -42,6 +38,49 @@ class CircleRenderer {
             console.error('初始化错误:', error);
             this.showError(error.message);
         }
+    }
+    
+    /**
+     * 设置Canvas尺寸
+     */
+    setupCanvasSize() {
+        // 获取设备像素比
+        const pixelRatio = window.devicePixelRatio || 1;
+        
+        // 获取容器尺寸
+        const containerWidth = this.canvas.clientWidth;
+        const containerHeight = this.canvas.clientHeight;
+        
+        console.log(`Canvas容器尺寸: ${containerWidth} x ${containerHeight}, 设备像素比: ${pixelRatio}`);
+        
+        // 设置canvas尺寸，应用设备像素比以提高渲染清晰度
+        this.canvas.width = containerWidth * pixelRatio;
+        this.canvas.height = containerHeight * pixelRatio;
+        
+        console.log(`Canvas尺寸设置为: ${this.canvas.width} x ${this.canvas.height}`);
+        
+        // 监听窗口大小变化，调整canvas尺寸
+        window.addEventListener('resize', () => {
+            this.resizeCanvas();
+        });
+    }
+    
+    /**
+     * 调整Canvas尺寸
+     */
+    resizeCanvas() {
+        // 获取设备像素比
+        const pixelRatio = window.devicePixelRatio || 1;
+        
+        // 获取容器尺寸
+        const containerWidth = this.canvas.clientWidth;
+        const containerHeight = this.canvas.clientHeight;
+        
+        // 设置canvas尺寸，应用设备像素比以提高渲染清晰度
+        this.canvas.width = containerWidth * pixelRatio;
+        this.canvas.height = containerHeight * pixelRatio;
+        
+        console.log(`Canvas尺寸调整为: ${this.canvas.width} x ${this.canvas.height}`);
     }
     
     /**
@@ -108,21 +147,29 @@ class CircleRenderer {
         
         const ctx = this.canvas.getContext('2d');
         if (ctx) {
+            // 获取设备像素比
+            const pixelRatio = window.devicePixelRatio || 1;
+            
             // 清除画布
             ctx.fillStyle = '#1e1e1e';
             ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
             
+            // 调整字体大小以适应高DPI屏幕
+            const fontSize = 20 * pixelRatio;
+            
             // 绘制加载消息
             ctx.fillStyle = '#ffffff';
-            ctx.font = '20px Arial';
+            ctx.font = `${fontSize}px Arial`;
             ctx.textAlign = 'center';
             ctx.fillText(message, this.canvas.width / 2, this.canvas.height / 2);
             
             // 绘制加载进度条
+            const barWidth = 200 * pixelRatio;
+            const barHeight = 10 * pixelRatio;
             ctx.fillStyle = '#3a3a3a';
-            ctx.fillRect(this.canvas.width / 2 - 100, this.canvas.height / 2 + 20, 200, 10);
+            ctx.fillRect(this.canvas.width / 2 - barWidth / 2, this.canvas.height / 2 + fontSize + 10, barWidth, barHeight);
             ctx.fillStyle = '#4a90e2';
-            ctx.fillRect(this.canvas.width / 2 - 100, this.canvas.height / 2 + 20, 200 * Math.random(), 10);
+            ctx.fillRect(this.canvas.width / 2 - barWidth / 2, this.canvas.height / 2 + fontSize + 10, barWidth * Math.random(), barHeight);
         }
     }
     
@@ -139,18 +186,25 @@ class CircleRenderer {
         
         const ctx = this.canvas.getContext('2d');
         if (ctx) {
+            // 获取设备像素比
+            const pixelRatio = window.devicePixelRatio || 1;
+            
             // 清除画布
             ctx.fillStyle = '#1e1e1e';
             ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
             
+            // 调整字体大小以适应高DPI屏幕
+            const fontSize = 20 * pixelRatio;
+            const smallFontSize = 16 * pixelRatio;
+            
             // 绘制错误消息
             ctx.fillStyle = '#ff5252';
-            ctx.font = '20px Arial';
+            ctx.font = `${fontSize}px Arial`;
             ctx.textAlign = 'center';
             ctx.fillText('初始化失败: ' + error, this.canvas.width / 2, this.canvas.height / 2);
             ctx.fillStyle = '#ffffff';
-            ctx.font = '16px Arial';
-            ctx.fillText('请检查控制台获取详细信息', this.canvas.width / 2, this.canvas.height / 2 + 30);
+            ctx.font = `${smallFontSize}px Arial`;
+            ctx.fillText('请检查控制台获取详细信息', this.canvas.width / 2, this.canvas.height / 2 + fontSize + 10);
         }
     }
     
@@ -158,55 +212,124 @@ class CircleRenderer {
      * 设置事件监听器
      */
     setupEventListeners() {
-        // 缩放控制
-        this.canvas.addEventListener('wheel', (e) => {
-            e.preventDefault();
-            const delta = e.deltaY > 0 ? -0.1 : 0.1;
-            this.camera.zoomCamera(delta);
-        });
-        
-        // 平移控制
-        let isDragging = false;
-        let lastPosition = { x: 0, y: 0 };
-        
-        this.canvas.addEventListener('mousedown', (e) => {
-            isDragging = true;
-            lastPosition = { x: e.clientX, y: e.clientY };
-            this.canvas.style.cursor = 'grabbing';
-        });
-        
-        window.addEventListener('mousemove', (e) => {
-            if (isDragging) {
-                const deltaX = e.clientX - lastPosition.x;
-                const deltaY = e.clientY - lastPosition.y;
-                this.camera.pan(deltaX, deltaY);
-                lastPosition = { x: e.clientX, y: e.clientY };
-            }
-        });
-        
-        window.addEventListener('mouseup', () => {
-            isDragging = false;
-            this.canvas.style.cursor = 'grab';
-        });
-        
-        // 重置视图按钮
-        document.getElementById('resetView').addEventListener('click', () => {
-            this.camera.reset();
-        });
-        
-        // 颜色模式切换按钮
-        document.getElementById('toggleColor').addEventListener('click', () => {
-            const newMode = this.circleGrid.toggleColorMode();
-            console.log(`切换颜色模式: ${newMode}`);
-            this.tileManager.rebuildTiles();
-        });
-        
-        // 鼠标悬停效果
-        this.canvas.addEventListener('mousemove', (e) => {
-            if (!isDragging) {
-                this.canvas.style.cursor = 'grab';
-            }
-        });
+      // 缩放控制
+      this.canvas.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        try {
+          const delta = e.deltaY > 0 ? -0.1 : 0.1;
+          this.camera.zoomCamera(delta);
+        } catch (error) {
+          console.error("缩放错误:", error);
+        }
+      });
+
+      // 平移控制
+      let isDragging = false;
+      let lastPosition = { x: 0, y: 0 };
+      let lastMoveTime = 0;
+
+      // 防止拖动时鼠标快速移动导致的问题
+      const safePan = (deltaX, deltaY) => {
+        try {
+          // 防止连续调用导致的性能问题
+          const now = performance.now();
+          if (now - lastMoveTime < 16) {
+            // 限制约60fps的处理频率
+            return;
+          }
+          lastMoveTime = now;
+
+          // 限制单次平移的最大值，防止因过大的值导致矩阵计算异常
+          const maxDelta = 30; // 降低单次最大平移量
+          const boundedDeltaX = Math.max(-maxDelta, Math.min(maxDelta, deltaX));
+          const boundedDeltaY = Math.max(-maxDelta, Math.min(maxDelta, deltaY));
+
+          // 如果增量几乎为零，可以跳过
+          if (Math.abs(boundedDeltaX) < 0.5 && Math.abs(boundedDeltaY) < 0.5) {
+            return;
+          }
+
+          this.camera.pan(boundedDeltaX, boundedDeltaY);
+        } catch (error) {
+          console.error("平移错误:", error);
+          // 出错时自动重置拖动状态
+          isDragging = false;
+          this.canvas.style.cursor = "grab";
+        }
+      };
+
+      this.canvas.addEventListener("mousedown", (e) => {
+        e.preventDefault(); // 防止文本选择等默认行为
+
+        // 确保初始化lastMoveTime
+        lastMoveTime = performance.now();
+
+        // 启用平滑平移 (需要在拖动开始时启用)
+        this.camera.setSmoothPanning(true, 0.15); // 降低平滑因子，使移动更平滑
+
+        isDragging = true;
+        lastPosition = { x: e.clientX, y: e.clientY };
+        this.canvas.style.cursor = "grabbing";
+      });
+
+      const handleMouseMove = (e) => {
+        if (isDragging) {
+          // 计算移动增量
+          const deltaX = e.clientX - lastPosition.x;
+          const deltaY = e.clientY - lastPosition.y;
+
+          // 使用安全平移函数
+          safePan(deltaX, deltaY);
+
+          // 更新上一次位置
+          lastPosition = { x: e.clientX, y: e.clientY };
+        }
+      };
+
+      // 使用document而不是window来捕获所有鼠标移动
+      document.addEventListener("mousemove", handleMouseMove);
+
+      // 处理鼠标释放，即使在canvas外
+      const handleMouseUp = () => {
+        if (isDragging) {
+          isDragging = false;
+          this.canvas.style.cursor = "grab";
+
+          // 释放鼠标时，关闭平滑平移
+          this.camera.setSmoothPanning(false);
+        }
+      };
+
+      document.addEventListener("mouseup", handleMouseUp);
+
+      // 处理鼠标离开窗口的情况
+      document.addEventListener("mouseleave", handleMouseUp);
+
+      // 处理失去焦点的情况
+      window.addEventListener("blur", handleMouseUp);
+
+      // 重置视图按钮
+      document.getElementById("resetView").addEventListener("click", () => {
+        try {
+          this.camera.reset();
+        } catch (error) {
+          console.error("重置视图错误:", error);
+        }
+      });
+
+      // 颜色模式切换按钮
+      document.getElementById("toggleColor").addEventListener("click", () => {
+        try {
+          const newMode = this.circleGrid.toggleColorMode();
+          console.log(`切换颜色模式: ${newMode}`);
+          this.tileManager.rebuildTiles();
+        } catch (error) {
+          console.error("切换颜色模式错误:", error);
+        }
+      });
+
+      // 设置默认鼠标样式
+      this.canvas.style.cursor = "grab";
     }
     
     /**
@@ -219,18 +342,43 @@ class CircleRenderer {
             const elapsed = now - this.lastFrameTime;
             this.lastFrameTime = now;
             
+            // 检查渲染器状态
+            if (this.renderer && this.renderer.gl && this.renderer.gl.isContextLost && this.renderer.gl.isContextLost()) {
+                // WebGL上下文丢失，等待恢复
+                console.warn("WebGL上下文已丢失，等待恢复...");
+                // 继续尝试渲染，WebGL上下文可能会自动恢复
+                this.animationFrameId = requestAnimationFrame(() => this.animate());
+                return;
+            }
+            
             // 获取可见瓦片
-            const visibleTiles = this.tileManager.getVisibleTiles();
+            const visibleTiles = this.tileManager ? this.tileManager.getVisibleTiles() : [];
             
             // 渲染瓦片
-            this.renderer.render(visibleTiles, this.camera);
+            if (this.renderer && visibleTiles.length > 0) {
+                try {
+                    this.renderer.render(visibleTiles, this.camera);
+                } catch (renderError) {
+                    console.error('渲染错误:', renderError);
+                    
+                    // 检查是否是WebGL上下文丢失
+                    if (this.renderer.gl && this.renderer.gl.isContextLost && this.renderer.gl.isContextLost()) {
+                        console.warn("检测到WebGL上下文丢失");
+                    } else {
+                        // 其他错误，尝试更新相机矩阵
+                        this.camera.updateMatrix();
+                    }
+                }
+            }
             
             // 继续下一帧
-            requestAnimationFrame(() => this.animate());
+            this.animationFrameId = requestAnimationFrame(() => this.animate());
         } catch (error) {
             console.error('渲染循环错误:', error);
             // 尝试继续渲染，避免完全崩溃
-            setTimeout(() => requestAnimationFrame(() => this.animate()), 1000);
+            setTimeout(() => {
+                this.animationFrameId = requestAnimationFrame(() => this.animate());
+            }, 1000);
         }
     }
 }
