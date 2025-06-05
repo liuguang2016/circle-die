@@ -98,50 +98,76 @@ export class TileManager {
                 
                 // 将下一级别的瓦片分组到网格中
                 for (const tile of nextLevelTiles) {
-                    // 计算所属网格单元
-                    const gridX = Math.floor(tile.x / tileSize);
-                    const gridY = Math.floor(tile.y / tileSize);
-                    const key = `${gridX},${gridY}`;
-                    
-                    if (!grid[key]) {
-                        grid[key] = {
-                            tiles: [],
-                            totalColor: [0, 0, 0, 0],
-                            x: (gridX + 0.5) * tileSize,
-                            y: (gridY + 0.5) * tileSize
-                        };
-                    }
-                    
-                    // 添加瓦片到网格单元
-                    grid[key].tiles.push(tile);
-                    
-                    // 累加颜色
-                    for (let i = 0; i < 4; i++) {
-                        grid[key].totalColor[i] += tile.color[i];
-                    }
+                  // 计算所属网格单元
+                  const gridX = Math.floor(tile.x / tileSize);
+                  const gridY = Math.floor(tile.y / tileSize);
+                  const key = `${gridX},${gridY}`;
+
+                  if (!grid[key]) {
+                    grid[key] = {
+                      tiles: [],
+                      totalColor: [0, 0, 0, 0],
+                      x: (gridX + 0.5) * tileSize,
+                      y: (gridY + 0.5) * tileSize,
+                      badDataCount: 0,
+                    };
+                  }
+
+                  // 添加瓦片到网格单元
+                  grid[key].tiles.push(tile);
+
+                  // 检查是否是坏数据
+                  if (tile.isBadData) {
+                    grid[key].badDataCount++;
+                  }
+
+                  // 累加颜色
+                  for (let i = 0; i < 4; i++) {
+                    grid[key].totalColor[i] += tile.color[i];
+                  }
                 }
-                
+
                 // 为每个网格单元创建合并瓦片
                 for (const key in grid) {
-                    const cell = grid[key];
-                    if (cell.tiles.length > 0) {
-                        // 计算平均颜色
-                        const avgColor = cell.totalColor.map(c => c / cell.tiles.length);
-                        
-                        // 创建合并瓦片
-                        const mergedTile = {
-                            x: cell.x,
-                            y: cell.y,
-                            size: tileSize,
-                            color: avgColor,
-                            merged: true,
-                            originalTiles: cell.tiles,
-                            level
-                        };
-                        
-                        // 添加到当前LOD级别
-                        this.tilesByLevel[level].push(mergedTile);
+                  const cell = grid[key];
+                  if (cell.tiles.length > 0) {
+                    // 检查是否包含坏数据
+                    const hasBadData = cell.badDataCount > 0;
+                    const badDataRatio = cell.badDataCount / cell.tiles.length;
+
+                    // 如果包含坏数据并且比例超过阈值，或者是第0级，则标记为坏数据
+                    const markAsBadData =
+                      hasBadData && (badDataRatio > 0.15 || level === 0);
+
+                    // 根据是否标记为坏数据决定颜色
+                    let finalColor;
+                    if (markAsBadData) {
+                      // 使用红色表示坏数据
+                      finalColor = [1, 0, 0, 1];
+                    } else {
+                      // 计算平均颜色
+                      finalColor = cell.totalColor.map(
+                        (c) => c / cell.tiles.length
+                      );
                     }
+
+                    // 创建合并瓦片
+                    const mergedTile = {
+                      x: cell.x,
+                      y: cell.y,
+                      size: tileSize,
+                      color: finalColor,
+                      merged: true,
+                      originalTiles: cell.tiles,
+                      level,
+                      isBadData: markAsBadData,
+                      badDataCount: cell.badDataCount,
+                      badDataRatio: badDataRatio,
+                    };
+
+                    // 添加到当前LOD级别
+                    this.tilesByLevel[level].push(mergedTile);
+                  }
                 }
                 
                 console.log(`LOD级别${level}: 生成了${this.tilesByLevel[level].length}个合并瓦片`);
@@ -155,7 +181,7 @@ export class TileManager {
             // 使用最简单的瓦片集
             if (!this.tilesByLevel || !this.tilesByLevel[0] || this.tilesByLevel[0].length === 0) {
                 this.tilesByLevel = [
-                    [{x: 0, y: 0, size: 100, color: [1, 0, 0, 1]}] // 至少显示一个红色方块
+                    [{x: 0, y: 0, size: 100, color: [1, 0, 0, 1], isBadData: true}] // 至少显示一个红色方块
                 ];
             }
         }

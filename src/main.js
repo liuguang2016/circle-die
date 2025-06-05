@@ -118,6 +118,9 @@ class CircleRenderer {
             console.log('初始化TileManager');
             this.tileManager = new TileManager(this.circleGrid, this.camera);
             
+            // 更新坏数据统计
+            this.updateBadDataStats();
+            
             // 设置事件监听器
             this.setupEventListeners();
             
@@ -131,6 +134,29 @@ class CircleRenderer {
         } catch (error) {
             console.error('网格初始化错误:', error);
             this.showError(error.message);
+        }
+    }
+    
+    /**
+     * 更新坏数据统计
+     */
+    updateBadDataStats() {
+        if (this.circleGrid && this.circleGrid.blocks) {
+            let badDataCount = 0;
+            for (const block of this.circleGrid.blocks) {
+                if (block.isBadData) {
+                    badDataCount++;
+                }
+            }
+            
+            const totalBlocks = this.circleGrid.blocks.length;
+            const badDataPercentage = ((badDataCount / totalBlocks) * 100).toFixed(2);
+            
+            // 更新UI显示
+            const badDataCountElement = document.getElementById("badDataCount");
+            if (badDataCountElement) {
+                badDataCountElement.textContent = `${badDataCount} (${badDataPercentage}%)`;
+            }
         }
     }
     
@@ -314,17 +340,6 @@ class CircleRenderer {
           this.camera.reset();
         } catch (error) {
           console.error("重置视图错误:", error);
-        }
-      });
-
-      // 颜色模式切换按钮
-      document.getElementById("toggleColor").addEventListener("click", () => {
-        try {
-          const newMode = this.circleGrid.toggleColorMode();
-          console.log(`切换颜色模式: ${newMode}`);
-          this.tileManager.rebuildTiles();
-        } catch (error) {
-          console.error("切换颜色模式错误:", error);
         }
       });
 
