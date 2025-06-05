@@ -20,11 +20,18 @@ class CircleRenderer {
         
         try {
             // 获取DOM元素
-            this.canvas = document.getElementById('renderCanvas');
+            this.canvas = document.querySelector("#renderCanvas");
             if (!this.canvas) {
-                throw new Error('找不到canvas元素');
+              throw new Error("找不到canvas元素");
             }
-            console.log('Canvas元素获取成功', this.canvas);
+            console.log("Canvas元素获取成功", this.canvas);
+
+            // 确保canvas有初始宽高
+            if (!this.canvas.width || !this.canvas.height) {
+              console.log("Canvas尺寸未设置，设置初始尺寸");
+              this.canvas.width = this.canvas.clientWidth || 800;
+              this.canvas.height = this.canvas.clientHeight || 600;
+            }
             
             // 显示加载中信息
             this.showLoadingMessage("正在初始化渲染器...");
@@ -93,6 +100,12 @@ class CircleRenderer {
      * @param {string} message - 加载消息
      */
     showLoadingMessage(message) {
+        // 避免在已经获取过WebGL上下文后再获取2D上下文
+        if (this.renderer && this.renderer.gl) {
+            console.log('WebGL上下文已存在，跳过2D加载消息');
+            return;
+        }
+        
         const ctx = this.canvas.getContext('2d');
         if (ctx) {
             // 清除画布
@@ -118,6 +131,12 @@ class CircleRenderer {
      * @param {string} error - 错误消息
      */
     showError(error) {
+        // 避免在已经获取过WebGL上下文后再获取2D上下文
+        if (this.renderer && this.renderer.gl) {
+            console.error('错误:', error);
+            return;
+        }
+        
         const ctx = this.canvas.getContext('2d');
         if (ctx) {
             // 清除画布

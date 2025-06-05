@@ -5,10 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>圆形70万方块渲染器</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="src/main.js" type="module" defer></script>
 </head>
 <body>
     <div class="container">
-        <canvas id="renderCanvas"></canvas>
+        <canvas id="renderCanvas">
+            你的浏览器似乎不支持或者禁用了 HTML5 <code>&lt;canvas&gt;</code> 元素。
+        </canvas>
         <div class="controls">
             <div class="info-panel">
                 <div class="info">
@@ -27,6 +30,5 @@
             </div>
         </div>
     </div>
-    <script type="module" src="src/main.js"></script>
 </body>
 </html> 

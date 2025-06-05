@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGL诊断工具</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        canvas {
+            border: 1px solid #ddd;
+            margin: 20px 0;
+            background-color: #f9f9f9;
+        }
+        #info {
+            font-family: monospace;
+            white-space: pre-wrap;
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+        .error {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+        .warning {
+            background-color: #fcf8e3;
+            color: #8a6d3b;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 8px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebGL诊断工具</h1>
+        
+        <div id="status" class="status">检查中...</div>
+        
+        <div>
+            <button id="testWebGL1">测试WebGL 1.0</button>
+            <button id="testWebGL2">测试WebGL 2.0</button>
+            <button id="clearInfo">清除信息</button>
+        </div>
+        
+        <h2>测试画布</h2>
+        <canvas id="testCanvas" width="400" height="300">您的浏览器不支持Canvas</canvas>
+        
+        <h2>详细信息</h2>
+        <div id="info"></div>
+    </div>
+
+    <script>
+        // DOM元素
+        const statusDiv = document.getElementById('status');
+        const infoDiv = document.getElementById('info');
+        const canvas = document.getElementById('testCanvas');
+        
+        // 设置状态显示
+        function setStatus(message, type) {
+            statusDiv.textContent = message;
+            statusDiv.className = 'status ' + type;
+        }
+        
+        // 显示信息
+        function log(message) {
+            infoDiv.textContent += message + '\n';
+        }
+        
+        // 清除信息
+        function clearInfo() {
+            infoDiv.textContent = '';
+        }
+        
+        // 检测WebGL支持
+        function testWebGL(version) {
+            clearInfo();
+            let gl = null;
+            const contextName = version === 1 ? 'webgl' : 'webgl2';
+            const versionStr = version === 1 ? 'WebGL 1.0' : 'WebGL 2.0';
+            
+            log(`测试 ${versionStr} 支持...`);
+            
+            try {
+                // 尝试获取WebGL上下文
+                gl = canvas.getContext(contextName);
+                
+                if (!gl) {
+                    if (version === 1) {
+                        // 尝试使用实验性WebGL
+                        log('尝试使用experimental-webgl...');
+                        gl = canvas.getContext('experimental-webgl');
+                    }
+                }
+                
+                if (gl) {
+                    setStatus(`${versionStr} 支持正常！`, 'success');
+                    log(`成功创建 ${versionStr} 上下文`);
+                    
+                    // 获取WebGL信息
+                    log('\n基本信息:');
+                    log(`- 上下文名称: ${contextName}`);
+                    log(`- 画布尺寸: ${canvas.width}x${canvas.height}`);
+                    
+                    // 获取扩展信息
+                    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                    if (debugInfo) {
+                        log('\nWebGL硬件信息:');
+                        log(`- WebGL供应商: ${gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL)}`);
+                        log(`- WebGL渲染器: ${gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)}`);
+                    } else {
+                        log('\n无法获取WebGL硬件信息（WEBGL_debug_renderer_info 扩展不可用）');
+                    }
+                    
+                    // 获取其他重要信息
+                    log('\nWebGL基本参数:');
+                    log(`- WebGL版本: ${gl.getParameter(gl.VERSION)}`);
+                    log(`- GLSL版本: ${gl.getParameter(gl.SHADING_LANGUAGE_VERSION)}`);
+                    log(`- WebGL供应商: ${gl.getParameter(gl.VENDOR)}`);
+                    log(`- WebGL渲染器: ${gl.getParameter(gl.RENDERER)}`);
+                    
+                    // 绘制一些内容
+                    drawScene(gl);
+                    
+                    // 列出所有支持的扩展
+                    const extensions = gl.getSupportedExtensions();
+                    log(`\n支持的扩展 (${extensions.length}个):`);
+                    extensions.forEach(ext => log(`- ${ext}`));
+                    
+                } else {
+                    setStatus(`您的浏览器不支持 ${versionStr}`, 'error');
+                    log(`创建 ${versionStr} 上下文失败`);
+                    log('可能的原因:');
+                    log('1. 您的浏览器不支持WebGL或已禁用');
+                    log('2. 显卡驱动不支持或已过期');
+                    log('3. 硬件加速已被禁用');
+                    log('\n尝试解决方法:');
+                    log('- 更新浏览器到最新版本');
+                    log('- 更新显卡驱动');
+                    log('- 在浏览器设置中启用硬件加速');
+                    log('- 尝试使用Chrome或Firefox浏览器');
+                }
+            } catch (error) {
+                setStatus(`测试 ${versionStr} 时发生错误`, 'error');
+                log(`错误: ${error.message}`);
+                console.error(error);
+            }
+        }
+        
+        // 在WebGL上下文中绘制一个简单的场景
+        function drawScene(gl) {
+            // 设置清除颜色
+            gl.clearColor(0.9, 0.9, 0.9, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            
+            // 创建着色器程序
+            const vertexShaderSource = `
+                attribute vec4 a_position;
+                void main() {
+                    gl_Position = a_position;
+                }
+            `;
+            
+            const fragmentShaderSource = `
+                precision mediump float;
+                void main() {
+                    gl_FragColor = vec4(0.0, 0.6, 1.0, 1.0);
+                }
+            `;
+            
+            // 创建着色器
+            function createShader(gl, type, source) {
+                const shader = gl.createShader(type);
+                gl.shaderSource(shader, source);
+                gl.compileShader(shader);
+                const success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+                if (success) {
+                    return shader;
+                }
+                console.log(gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            
+            // 创建程序
+            function createProgram(gl, vertexShader, fragmentShader) {
+                const program = gl.createProgram();
+                gl.attachShader(program, vertexShader);
+                gl.attachShader(program, fragmentShader);
+                gl.linkProgram(program);
+                const success = gl.getProgramParameter(program, gl.LINK_STATUS);
+                if (success) {
+                    return program;
+                }
+                console.log(gl.getProgramInfoLog(program));
+                gl.deleteProgram(program);
+                return null;
+            }
+            
+            try {
+                // 编译着色器
+                const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+                const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+                
+                // 创建程序
+                const program = createProgram(gl, vertexShader, fragmentShader);
+                
+                // 获取属性位置
+                const positionAttributeLocation = gl.getAttribLocation(program, "a_position");
+                
+                // 创建位置缓冲区
+                const positionBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+                
+                // 三个三角形的顶点
+                const positions = [
+                    0.0, 0.5,
+                    -0.5, -0.5,
+                    0.5, -0.5
+                ];
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+                
+                // 使用程序
+                gl.useProgram(program);
+                
+                // 启用属性
+                gl.enableVertexAttribArray(positionAttributeLocation);
+                gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+                gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+                
+                // 绘制
+                gl.drawArrays(gl.TRIANGLES, 0, 3);
+                
+                log('\n成功绘制了一个蓝色三角形!');
+            } catch (error) {
+                log(`绘制测试失败: ${error.message}`);
+                console.error(error);
+            }
+        }
+        
+        // 初始检查
+        function initialCheck() {
+            clearInfo();
+            log('浏览器信息:');
+            log(`- 用户代理: ${navigator.userAgent}`);
+            log(`- 平台: ${navigator.platform}`);
+            log('\n检查WebGL基本支持:');
+            
+            if (window.WebGLRenderingContext) {
+                log('- WebGL接口存在: ✓');
+                
+                // 测试WebGL1
+                try {
+                    const testCanvas = document.createElement('canvas');
+                    const gl1 = testCanvas.getContext('webgl') || testCanvas.getContext('experimental-webgl');
+                    
+                    if (gl1) {
+                        log('- WebGL 1.0: ✓ 支持');
+                        setStatus('WebGL 1.0 可用', 'success');
+                    } else {
+                        log('- WebGL 1.0: ✗ 不支持');
+                        setStatus('WebGL 1.0 不可用', 'warning');
+                    }
+                } catch (e) {
+                    log(`- WebGL 1.0: ✗ 错误 (${e.message})`);
+                    setStatus('WebGL 1.0 检测错误', 'error');
+                }
+                
+                // 测试WebGL2
+                try {
+                    const testCanvas = document.createElement('canvas');
+                    const gl2 = testCanvas.getContext('webgl2');
+                    
+                    if (gl2) {
+                        log('- WebGL 2.0: ✓ 支持');
+                        setStatus('WebGL 1.0 和 2.0 都可用', 'success');
+                    } else {
+                        log('- WebGL 2.0: ✗ 不支持');
+                    }
+                } catch (e) {
+                    log(`- WebGL 2.0: ✗ 错误 (${e.message})`);
+                }
+                
+            } else {
+                log('- WebGL接口不存在: ✗');
+                setStatus('您的浏览器不支持WebGL', 'error');
+            }
+            
+            log('\n点击上方的按钮运行详细测试');
+        }
+        
+        // 添加事件监听器
+        document.getElementById('testWebGL1').addEventListener('click', () => testWebGL(1));
+        document.getElementById('testWebGL2').addEventListener('click', () => testWebGL(2));
+        document.getElementById('clearInfo').addEventListener('click', clearInfo);
+        
+        // 初始检查
+        initialCheck();
+    </script>
+</body>
+</html>
